@@ -674,15 +674,20 @@ function migrate(d){
   return d;
 }
 let saveT;
+let listSavedVer=-1;
+const bumpList = () => { S.listVer=(S.listVer||0)+1; };
 function persist(){
   clearTimeout(saveT);
-  saveT=setTimeout(()=>{
+  saveT=setTimeout(async ()=>{
+    if(IDB.db){ try{ const {st,li}=splitState(); const setF=(IDB._set||IDB.set).bind(IDB);
+      await setF(KEY, st); if(S.listVer!==listSavedVer||listSavedVer<0){ await setF(KEY+'_list', li); listSavedVer=S.listVer; }
+      if(!CLOUD.ready) $('#saved').textContent='Salvato alle '+new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}); try{ localStorage.removeItem(KEY); }catch(e){}
+      if(CLOUD.ready) cloudSaveSoon(); return; }catch(e){} }
     const ok=()=>{ $('#saved').textContent='Salvato alle '+new Date().toLocaleTimeString('it-IT',{hour:'2-digit',minute:'2-digit'}); };
     const fallback=()=>{ try{ localStorage.setItem(KEY, JSON.stringify(S)); ok(); }catch(e){ $('#saved').textContent='Non salvato'; toast('Salvataggio automatico non disponibile qui: apri il file dal computer o usa Scarica backup.'); } };
-    if(IDB.db) (IDB._set||IDB.set).call(IDB, KEY, JSON.parse(JSON.stringify(S))).then(()=>{ if(!CLOUD.ready) ok(); try{ localStorage.removeItem(KEY); }catch(e){} }).catch(()=>{ if(!CLOUD.ready) fallback(); });
-    else if(!CLOUD.ready) fallback();
+    if(!CLOUD.ready) fallback();
     if(CLOUD.ready) cloudSaveSoon();
-  },300);
+  },700);
 }
 let toastT;
 function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('on'); clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('on'),3600); }
@@ -1186,6 +1191,7 @@ function agentEnsure(text){ if(!String(text||'').trim()) return null; let a=agen
 function fillAgents(){ $('#dlAg').innerHTML=(S.settings.agenti||[]).map(a=>`<option value="${esc(a.name)}">${a.prov!=null?esc(String(a.prov).replace('.',','))+'%':''}</option>`).join(''); }
 const rowProv = (o,r) => String(r.prov??'').trim()!=='' ? num(r.prov) : (o.agent ? num(o.agentPct) : 0);
 function agentTotals(o){ if(!o.agent) return null; let c=0; o.rows.forEach(r=>{ if(String(r.price).trim()!=='') c+=rowTotal(r)*rowProv(o,r)/100; }); return r2(c); }
+let rolT; function renderOfferListSoon(){ clearTimeout(rolT); rolT=setTimeout(renderOfferList, 500); }
 function renderOfferList(){
   renderDailyBadge();
   const q=$('#oq').value.trim().toLowerCase(), c=$('#oCo').value, y=$('#oYear').value;
@@ -1366,7 +1372,7 @@ sheet.addEventListener('input', e=>{
     if((el.dataset.k==='price'||el.dataset.k==='cdisc') && r.dk && r.list) saveClientDisc(o, r);
     if((el.dataset.k==='cost'||el.dataset.k==='adisc') && r.dk && r.list) saveClientAcq(o, r);
   }
-  persist(); renderOfferList();
+  persist(); renderOfferListSoon();
 });
 sheet.addEventListener('change', e=>{
   const o=offer(), el=e.target;
@@ -1848,7 +1854,7 @@ $('#pheDlg').addEventListener('change', e=>{ if(e.target.name==='pheMatR'){ pheS
 $('#pheCancel').addEventListener('click', ()=>$('#pheDlg').close());
 $('#pheOk').addEventListener('click', ()=>{
   const o=offer(), x=pheCalc(); if(x.sale==null) return;
-  pheCat.acq=x.acq; pheCat.mul=x.mul; pheSel.model=x.model; persist();
+  pheCat.acq=x.acq; pheCat.mul=x.mul; pheSel.model=x.model; bumpList(); persist();
   const vat=String(S.settings.vat); let rows;
   if(x.ric){
     rows=[{code:`${x.model}_${x.piastra?'PIASTRA':'GUARN'}_${x.k.replace('_','-')}`, desc:`${x.piastra?'Piastra':'Guarnizione'} di ricambio ${x.lbl} per scambiatore ${pheCat.mandante} mod. ${x.model}`, note:'', um:'pz', qty:String(x.q), price:fmt(r2(x.sale/x.q)), disc:'', vat, cost:fmt(r2(x.cost/x.q)), list:x.unit}];
@@ -2179,8 +2185,14 @@ const hasRole = (a,r,c) => c ? relOf(a,c).includes(r) : Object.values(a.rel||{})
 function addRole(a,c,r){ a.rel=a.rel||{}; let l=a.rel[c]||[]; if(l.includes(r)) return; if(r==='cliente') l=l.filter(x=>x!=='potenziale'); if(r==='potenziale'&&l.includes('cliente')) return; a.rel[c]=[...l,r]; }
 function relSummary(a){ return S.settings.companies.filter(c=>relOf(a,c.id).length).map(c=>`<span class="co-tag ${c.id}">${esc(c.short)}</span> ${relOf(a,c.id).map(roleLbl).join(', ')}`).join(' &nbsp;'); }
 const condOf = (a,c) => (a?.cond&&a.cond[c])||{};
-function fillProd(coId){
-  $('#dlProd').innerHTML=S.products.filter(p=>(!p.co||p.co===coId)&&!p.obsolete).slice(0,12000).map(p=>`<option value="${esc(p.code)}">${esc(firstLine(p.desc))}</option>`).join('');
+let dlCo=null;
+function fillProd(coId){ dlCo=coId; $('#dlProd').innerHTML=''; }
+function suggestProd(q){
+  q=String(q||'').trim().toLowerCase(); if(q.length<2){ $('#dlProd').innerHTML=''; return; }
+  const out=[], seen=new Set(); const ok=p=>(!p.co||p.co===dlCo)&&!p.obsolete;
+  for(const p of S.products){ if(out.length>=25) break; if(ok(p)&&p.code.toLowerCase().startsWith(q)&&!seen.has(p.code)){ out.push(p); seen.add(p.code); } }
+  if(out.length<25) for(const p of S.products){ if(out.length>=40) break; if(ok(p)&&!seen.has(p.code)&&(p.code.toLowerCase().includes(q)||String(p.alias||'').toLowerCase().includes(q))){ out.push(p); seen.add(p.code); } }
+  $('#dlProd').innerHTML=out.map(p=>`<option value="${esc(p.code)}">${esc(firstLine(p.desc))}</option>`).join('');
 }
 function findProd(code, coId){
   const c=code.trim().toLowerCase();
@@ -2193,10 +2205,18 @@ function findProdX(code, coId){
   const xr=S.xref?.[n]; if(xr){ const q=findProd(xr[0], coId); if(q) return {p:q, via:`equivalente di ${xr[1]} ${code.trim()}`}; return {miss:`${xr[1]} ${code.trim()} corrisponde al codice ${xr[0]}, che non è nei listini caricati per questa società`}; }
   return {};
 }
-function fillCli(coId){
-  $('#dlCli').innerHTML=S.anag.filter(a=>hasRole(a,'cliente',coId)||hasRole(a,'potenziale',coId)).map(a=>`<option value="${esc(a.name)}">${esc(a.city||'')}</option>`).join('')
-    + S.anag.filter(a=>!(hasRole(a,'cliente',coId)||hasRole(a,'potenziale',coId))&&(hasRole(a,'cliente')||hasRole(a,'potenziale'))).map(a=>`<option value="${esc(a.name)}">${esc(a.city||'')} · cliente di altra società</option>`).join('');
+let dlCliCo=null;
+function fillCli(coId){ dlCliCo=coId; $('#dlCli').innerHTML=''; }
+function suggestCli(q){
+  q=String(q||'').trim().toLowerCase(); if(q.length<2){ $('#dlCli').innerHTML=''; return; }
+  const mine=[], other=[];
+  for(const a of S.anag){ if(mine.length>=30) break; const n=String(a.name||'').toLowerCase(); if(!n.includes(q)) continue;
+    if(hasRole(a,'cliente',dlCliCo)||hasRole(a,'potenziale',dlCliCo)) mine.push(a); else if((hasRole(a,'cliente')||hasRole(a,'potenziale'))&&other.length<10) other.push(a); }
+  const sorter=(x,y)=>(String(x.name).toLowerCase().startsWith(q)?0:1)-(String(y.name).toLowerCase().startsWith(q)?0:1);
+  $('#dlCli').innerHTML=mine.sort(sorter).map(a=>`<option value="${esc(a.name)}">${esc(a.city||'')}</option>`).join('')+other.map(a=>`<option value="${esc(a.name)}">${esc(a.city||'')} · cliente di altra società</option>`).join('');
 }
+let sugT;
+document.addEventListener('input', e=>{ const l=e.target.getAttribute&&e.target.getAttribute('list'); if(l!=='dlProd'&&l!=='dlCli') return; clearTimeout(sugT); const v=e.target.value; sugT=setTimeout(()=>{ l==='dlProd'?suggestProd(v):suggestCli(v); },120); }, true);
 function fillTip(){
   const all=[...new Set(S.settings.tipologie.concat(S.anag.map(a=>a.tipologia).filter(Boolean)))];
   const s=$('#aTip'), v=s.value; s.innerHTML='<option value="">Tutte le tipologie</option>'+all.map(t=>`<option>${esc(t)}</option>`).join(''); s.value=v;
@@ -2650,7 +2670,7 @@ $('#impPreview').addEventListener('click', e=>{
   if(e.target.id==='impGo' && pending){ const p=pending; pending=null; doImport(p); }
 });
 function doImport({type, coId: coId0, items, fname}){
-  let coId=coId0;
+  let coId=coId0; bumpList();
   let nNew=0, nUpd=0;
   if(type==='docs'){
     const {docs}=arguments[0]; let nOff=0, nOth=0, nCli=0, nPdf=0; S.daneaDocs=S.daneaDocs||[]; const pdfJobs=[];
@@ -2875,7 +2895,7 @@ $('#bkIn').addEventListener('change', e=>{
   r.onload=async ()=>{ try{ const d=JSON.parse(r.result); if(!d.settings||!d.anag||!d.offers) throw 0;
     const pdfs=d.pdfs||{}; delete d.pdfs;
     if(IDB.db) for(const [id,u] of Object.entries(pdfs)){ try{ const bl=await (await fetch(u)).blob(); await IDB.set('pdf:'+id, bl); }catch(_){} }
-    S=migrate(d); curOffer=S.offers[0]?.id||null; curAna=S.anag[0]?.id||null; renderAll(); persist(); toast('Backup ripristinato.'); }catch(_){ toast('Il file non è un backup di questo gestionale.'); } };
+    S=migrate(d); bumpList(); curOffer=S.offers[0]?.id||null; curAna=S.anag[0]?.id||null; renderAll(); persist(); toast('Backup ripristinato.'); }catch(_){ toast('Il file non è un backup di questo gestionale.'); } };
   r.readAsText(f); e.target.value='';
 });
 $('#reset').addEventListener('click', ()=>{ if(!confirm('Sostituire tutti i dati con quelli di esempio? Senza backup, quanto inserito andrà perso.')) return; S=migrate(null); curOffer=S.offers[0].id; curAna=S.anag[0].id; renderAll(); persist(); });
@@ -2952,7 +2972,9 @@ async function cloudSave(force){
   try{
     const {st, li}=splitState();
     for(const [name,obj] of [['listini.json',li],['stato.json',st]]){
+      if(name==='listini.json'&&!force&&CLOUD.listVer===S.listVer&&CLOUD.etag[name]) continue;
       const r=await cloudPutJSON(name, obj, force);
+      if(name==='listini.json'&&r!=='conflict') CLOUD.listVer=S.listVer;
       if(r==='conflict'){
         const m=await cloudMeta(name); const who=m?.lastModifiedBy?.user?.displayName||'un collega';
         if(confirm(`${who} ha salvato modifiche ai dati mentre lavoravi.\n\nOK = carica la versione aggiornata (le tue ultime modifiche non ancora salvate andranno perse)\nAnnulla = sovrascrivi con la tua versione`)){ CLOUD.busy=false; CLOUD.dirty=false; await cloudReload(); return; }
@@ -2965,7 +2987,7 @@ async function cloudSave(force){
 }
 async function cloudReload(){
   const st=await cloudGetJSON('stato.json'), li=await cloudGetJSON('listini.json');
-  if(st){ S=migrate({...st, ...(li||{})}); curOffer=S.offers.find(o=>o.id===curOffer)?curOffer:(S.offers[0]?.id||null); curAna=S.anag.find(a=>a.id===curAna)?curAna:(S.anag[0]?.id||null); renderAll(); }
+  if(st){ S=migrate({...st, ...(li||{})}); CLOUD.listVer=S.listVer; curOffer=S.offers.find(o=>o.id===curOffer)?curOffer:(S.offers[0]?.id||null); curAna=S.anag.find(a=>a.id===curAna)?curAna:(S.anag[0]?.id||null); renderAll(); }
   cloudStatus('dati aggiornati da SharePoint');
 }
 async function cloudPoll(){
@@ -3003,9 +3025,9 @@ async function cloudStart(){
     await msHandleRedirect(); await msToken(); loginScreen('Caricamento dei dati da SharePoint…', false);
     await cloudInit(); cloudPatchIDB();
     const st=await cloudGetJSON('stato.json'), li=await cloudGetJSON('listini.json');
-    if(st){ S=migrate({...st, ...(li||{})}); }
+    if(st){ S=migrate({...st, ...(li||{})}); CLOUD.listVer=S.listVer; }
     else {
-      const local=IDB.db?await IDB._get(KEY):null;
+      let local=IDB.db?await IDB._get(KEY):null; if(local&&!local.products){ const l2=await IDB._get(KEY+'_list'); local={...local, ...(l2||{products:[]})}; }
       if(local&&local.offers&&confirm('L\'archivio SharePoint è ancora vuoto.\n\nOK = carica su SharePoint i dati presenti in questo browser\nAnnulla = parti da zero (potrai usare "Ripristina backup" in Impostazioni)')) S=migrate(local);
       CLOUD.ready=true; await cloudSave(true);
     }
@@ -3020,7 +3042,7 @@ async function cloudStart(){
 renderAll();
 IDB.open().then(async()=>{
   if(CLOUD.on){ await cloudStart(); return; }
-  const d=await IDB.get(KEY);
+  let d=await IDB.get(KEY); if(d&&!d.products){ const li=await IDB.get(KEY+'_list'); d={...d, ...(li||{products:[]})}; }
   if(d){ S=migrate(d); curOffer=S.offers[0]?.id||null; curAna=S.anag[0]?.id||null; renderAll(); }
   else persist();
 }).catch(()=>{ if(CLOUD.on) cloudStart(); });
