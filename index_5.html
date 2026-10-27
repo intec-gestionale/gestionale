@@ -491,7 +491,6 @@ dialog::backdrop{background:rgba(8,30,42,.45)}
   </div>
   <div class="actions" style="margin:0 0 8px">
     <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="exAgain"> Includi anche le offerte già esportate</label>
-    <span class="hint" id="exAgainHint" hidden style="color:var(--warn-dk,#9a4a00)">Attenzione: se le reimporti, in Easyfatt diventano offerte doppie. Usalo per recuperare un'esportazione persa o sbagliata.</span>
   </div>
   <div class="tablewrap" style="max-height:46vh;overflow:auto"><table class="grid" id="exTab"></table></div>
   <p class="hint" id="exLast" style="margin:8px 0 0"></p>
@@ -1188,7 +1187,7 @@ function fillCoSelects(){
 }
 function exPending(){
   const today=todayISO(), draft=$('#exDraft')?.checked!==false, until=$('#exUntil')?.value||today, from=$('#exFrom')?.value||'', again=!!$('#exAgain')?.checked, onlyT=false;
-  return S.offers.filter(o=>(!o.exportedAt||(again&&!o.fromDanea)) && (!from||!o.date||o.date>=from) && o.customer.name && o.rows.some(r=>r.code||r.desc) && (draft||o.status!=='Bozza') && (!onlyT||o.date===today) && (!until||!o.date||o.date<=until));
+  return S.offers.filter(o=>(again||!o.exportedAt) && (!from||!o.date||o.date>=from) && o.customer.name && o.rows.some(r=>r.code||r.desc) && (draft||o.status!=='Bozza') && (!onlyT||o.date===today) && (!until||!o.date||o.date<=until));
 }
 function renderDailyBadge(){
   const n=S.offers.filter(o=>!o.exportedAt&&o.customer.name&&o.rows.some(r=>r.code||r.desc)).length, b=$('#dailyEx'); if(!b) return;
@@ -1210,8 +1209,7 @@ function buildXMLBlock(list){
   const docs=list.map(o=>{ const x=buildXML(o); return x.slice(x.indexOf('<Document>'), x.lastIndexOf('</Document>')+'</Document>'.length); }).join('\n    ');
   const head=buildXML(list[0]); return head.slice(0, head.indexOf('<Documents>')+'<Documents>'.length)+'\n    '+docs+'\n  </Documents>\n</EasyfattDocuments>\n';
 }
-$('#dailyEx').addEventListener('click', ()=>{ $('#exUntil').value=todayISO(); $('#exFrom').value=''; $('#exAgain').checked=false; $('#exAgainHint').hidden=true; renderExDlg(); $('#exDlg').showModal(); });
-$('#exAgain').addEventListener('change', ()=>{ $('#exAgainHint').hidden=!$('#exAgain').checked; });
+$('#dailyEx').addEventListener('click', ()=>{ $('#exUntil').value=todayISO(); $('#exFrom').value=''; $('#exAgain').checked=false; renderExDlg(); $('#exDlg').showModal(); });
 ['#exDraft','#exUntil','#exFrom','#exAgain'].forEach(s=>{ $(s).addEventListener('change', renderExDlg); $(s).addEventListener('input', renderExDlg); });
 $('#exUntilToday').addEventListener('click', ()=>{ $('#exUntil').value=todayISO(); renderExDlg(); });
 $('#exCancel').addEventListener('click', ()=>$('#exDlg').close());
